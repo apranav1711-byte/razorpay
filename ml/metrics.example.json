@@ -1,0 +1,135 @@
+{
+  "model_version": "cbs-xgb-calibrated-1.0.0",
+  "dataset": {
+    "rows": 20000,
+    "seed": 42,
+    "synthetic_anomaly_rates": {
+      "first_time_rate": 0.12,
+      "velocity_spike_rate": 0.12,
+      "geo_mismatch_rate": 0.14,
+      "high_amount_anomaly_rate": 0.12,
+      "new_device_base_rate": 0.1
+    },
+    "dispute_rate": 0.0542,
+    "split": {
+      "train": 14000,
+      "validation": 3000,
+      "held_out_test": 3000
+    }
+  },
+  "imbalance_strategy": {
+    "method": "scale_pos_weight",
+    "training_ratio": 17.45,
+    "calibration": "Platt-style sigmoid calibration fitted only on validation split"
+  },
+  "held_out_metrics": {
+    "precision": 0.324,
+    "recall": 0.642,
+    "f1": 0.4306,
+    "roc_auc": 0.9086,
+    "average_precision": 0.463,
+    "decision_threshold": 0.12,
+    "confusion_matrix": {
+      "true_positive": 104,
+      "false_positive": 217,
+      "true_negative": 2621,
+      "false_negative": 58
+    }
+  },
+  "cost_assumptions": {
+    "currency": "INR",
+    "false_positive_cost_cents": 18000,
+    "false_negative_cost_cents": 260000,
+    "rationale": "False-positive cost represents review friction and lost conversion; false-negative cost represents chargeback principal, fee, and operations burden. Both values are configurable scenario assumptions, not measured merchant loss."
+  },
+  "threshold_analysis": [
+    {
+      "threshold": 0.01,
+      "true_positive": 155,
+      "false_positive": 1051,
+      "true_negative": 1787,
+      "false_negative": 7,
+      "precision": 0.1285,
+      "recall": 0.9568,
+      "f1": 0.2266,
+      "false_positive_rate": 0.3703,
+      "false_positive_cost_cents": 18918000,
+      "false_negative_cost_cents": 1820000,
+      "total_expected_cost_cents": 20738000
+    },
+    {
+      "threshold": 0.03,
+      "true_positive": 141,
+      "false_positive": 582,
+      "true_negative": 2256,
+      "false_negative": 21,
+      "precision": 0.195,
+      "recall": 0.8704,
+      "f1": 0.3186,
+      "false_positive_rate": 0.2051,
+      "false_positive_cost_cents": 10476000,
+      "false_negative_cost_cents": 5460000,
+      "total_expected_cost_cents": 15936000
+    },
+    {
+      "threshold": 0.05,
+      "true_positive": 124,
+      "false_positive": 424,
+      "true_negative": 2414,
+      "false_negative": 38,
+      "precision": 0.2263,
+      "recall": 0.7654,
+      "f1": 0.3493,
+      "false_positive_rate": 0.1494,
+      "false_positive_cost_cents": 7632000,
+      "false_negative_cost_cents": 9880000,
+      "total_expected_cost_cents": 17512000
+    },
+    {
+      "threshold": 0.1,
+      "true_positive": 106,
+      "false_positive": 256,
+      "true_negative": 2582,
+      "false_negative": 56,
+      "precision": 0.2928,
+      "recall": 0.6543,
+      "f1": 0.4046,
+      "false_positive_rate": 0.0902,
+      "false_positive_cost_cents": 4608000,
+      "false_negative_cost_cents": 14560000,
+      "total_expected_cost_cents": 19168000
+    },
+    {
+      "threshold": 0.2,
+      "true_positive": 99,
+      "false_positive": 151,
+      "true_negative": 2687,
+      "false_negative": 63,
+      "precision": 0.396,
+      "recall": 0.6111,
+      "f1": 0.4806,
+      "false_positive_rate": 0.0532,
+      "false_positive_cost_cents": 2718000,
+      "false_negative_cost_cents": 16380000,
+      "total_expected_cost_cents": 19098000
+    },
+    {
+      "threshold": 0.35,
+      "true_positive": 74,
+      "false_positive": 73,
+      "true_negative": 2765,
+      "false_negative": 88,
+      "precision": 0.5034,
+      "recall": 0.4568,
+      "f1": 0.479,
+      "false_positive_rate": 0.0257,
+      "false_positive_cost_cents": 1314000,
+      "false_negative_cost_cents": 22880000,
+      "total_expected_cost_cents": 24194000
+    }
+  ],
+  "notes": [
+    "Held-out test metrics are calculated after training and calibration. The decision threshold is chosen by expected cost on validation data only; the held-out test split is not used to tune model parameters or thresholds.",
+    "All data is synthetic and intended solely to demonstrate reproducibility, traceability, calibration, and false-positive-cost reporting."
+  ]
+}

@@ -1,0 +1,54 @@
+flowchart LR
+  subgraph Data[Reproducible synthetic data]
+    Generator[20,000-row seeded generator]
+    Split[Train 70% / Validation 15% / Held-out 15%]
+    Generator --> Split
+  end
+
+  subgraph Risk[Stage A — calibrated risk scorer]
+    XGB[XGBoost classifier]
+    Calibrate[Validation-only sigmoid calibration]
+    SHAP[SHAP feature contributions]
+    Split --> XGB --> Calibrate --> SHAP
+  end
+
+  subgraph Evidence[Stage B — bounded evidence drafting]
+    Retrieve[Retrieve structured transaction, delivery, communication, and history fields]
+    Validate[Validate source-linked JSON claims]
+    Claude[Claude Sonnet through server-side proxy]
+    Retrieve --> Claude --> Validate
+    Retrieve -. deterministic fallback .-> Validate
+  end
+
+  subgraph Service[FastAPI reference service]
+    Score[/POST score/]
+    Queue[/GET transactions + disputes/]
+    Draft[/POST evidence generate/]
+    Review[/POST evidence approve or reject/]
+    Metrics[/GET metrics/]
+    Audit[/GET audit-log/]
+  end
+
+  subgraph Control[Safety and accountability boundary]
+    DB[(Persisted records)]
+    Log[(Append-only UTC audit events)]
+    Gate{Explicit human approval?}
+    DB --> Log
+    Review --> Gate
+  end
+
+  subgraph UI[Six-screen merchant dashboard]
+    Dashboard[React + TypeScript + Tailwind + Recharts]
+  end
+
+  SHAP --> Score
+  Validate --> Draft
+  Score --> DB
+  Queue --> DB
+  Draft --> DB
+  Review --> DB
+  Metrics --> DB
+  Audit --> Log
+  Service --> Dashboard
+  Gate -->|records local review state only| Log
+  Gate -. no money movement / no external submission .-> Dashboard

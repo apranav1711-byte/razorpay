@@ -1,0 +1,29 @@
+# ChargebackShield — Project TODO
+
+- [x] Define the shared domain model for transactions, customers, orders, delivery, communications, disputes, model outputs, evidence drafts, human decisions, and immutable audit events.
+- [x] Implement a reproducible synthetic dataset pipeline with configurable anomaly rates and configurable false-positive and false-negative cost assumptions.
+- [x] Implement feature engineering, reproducible train/validation/held-out splits, model training, probability calibration, SHAP explainability artifacts, and model versioning.
+- [x] Generate and preserve transparent held-out evaluation metrics, confusion matrix data, threshold trade-off analysis, and false-positive cost analysis.
+- [x] Implement a structured-evidence retrieval workflow that limits evidence drafting inputs to persisted transaction data and related source records.
+- [x] Integrate the server-side Anthropic-compatible evidence drafting workflow with source-linked JSON claims and explicit insufficient-evidence responses.
+- [x] Persist transactions, disputes, scores, evidence drafts, reviewer decisions, metrics, and append-only UTC audit records with model version, input hash, output, and actor.
+- [x] Implement typed backend operations for scoring, transaction and dispute retrieval, evidence generation, explicit approval, rejection with a recorded reason, metrics, and audit-log access.
+- [x] Enforce safety boundaries preventing money movement or automated external dispute submission in every application flow.
+- [x] Build the six responsive merchant dashboard screens: Overview, Transaction Risk Feed, Dispute Queue, Evidence Generator, Model Transparency, and Audit Log.
+- [x] Apply the warm cream, hand-drawn blueprint aesthetic alongside the clean Razorpay-blue fintech dashboard system, accessible interactions, and responsive layouts.
+- [x] Add automated tests for scoring, evidence grounding, insufficient-evidence handling, approval and rejection transitions, and append-only audit logging.
+- [x] Write README.md, ARCHITECTURE.md, METRICS.md, SECURITY.md, a rendered architecture diagram, reproducibility instructions, and a five-minute walkthrough checklist.
+- [x] Validate the complete demo flow in the browser, verify tests and type checks, and save the final project checkpoint.
+- [x] Define the CSV schema, sensitive-data exclusions, row-validation rules, import limits, and per-import audit requirements for real merchant data.
+- [x] Implement secure CSV selection, parsing, validation feedback, controlled transaction processing, persisted import metadata, and append-only import audit records.
+- [x] Add an Import Data dashboard experience with mapping guidance, data-quality reporting, safe processing states, and clear source-data notices.
+- [x] Extend the Audit Log with date, action, actor, entity, and outcome filters plus interactive trend and event-distribution charts.
+- [x] Add a download-ready PDF export for each generated evidence draft, including source links, insufficiency disclosures, model metadata, and review status.
+- [x] Substantially refine the dashboard visual hierarchy, motion, navigation, states, and responsive interactions without weakening the stated safety controls.
+- [x] Add and run automated coverage for CSV rejection/validation, import auditing, audit filtering, and safe PDF draft export; update the documentation.
+- [x] Save the verified enhancement checkpoint for secure CSV intake, audit intelligence, evidence-PDF export, and visual refinements.
+- [x] Review the target GitHub repository visibility and current contents before publishing the ChargebackShield project.
+- [x] Complete repository handoff documentation, including installation, run, test, architecture, safety, CSV import, PDF export, and walkthrough guidance.
+- [x] Verify the repository handoff documentation and replace the rejected environment-example file with a safe configuration guide.
+- [ ] Upload the validated ChargebackShield source and documentation to the selected Razorpay repository with an auditable release commit.
+- [ ] Verify the remote repository contains the expected project structure and report the handoff result.
