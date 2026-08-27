@@ -25,5 +25,5 @@
 - [x] Review the target GitHub repository visibility and current contents before publishing the ChargebackShield project.
 - [x] Complete repository handoff documentation, including installation, run, test, architecture, safety, CSV import, PDF export, and walkthrough guidance.
 - [x] Verify the repository handoff documentation and replace the rejected environment-example file with a safe configuration guide.
-- [ ] Upload the validated ChargebackShield source and documentation to the selected Razorpay repository with an auditable release commit.
-- [ ] Verify the remote repository contains the expected project structure and report the handoff result.
+- [x] Upload the validated ChargebackShield source and documentation to the selected Razorpay repository with an auditable release commit.
+- [x] Verify the remote repository contains the expected project structure and report the handoff result.
