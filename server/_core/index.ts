@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { spawn } from "child_process";
+import { createHash } from "crypto";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
@@ -8,6 +9,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
+import { sdk } from "./sdk";
 import { serveStatic, setupVite } from "./vite";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -30,6 +32,9 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  const importGatewayToken = process.env.JWT_SECRET
+    ? createHash("sha256").update(`${process.env.JWT_SECRET}:chargebackshield-import-proxy-v1`).digest("hex")
+    : null;
   if (process.env.START_RISK_API === "true") {
     const riskService = spawn("python3", ["-m", "uvicorn", "ml.api:app", "--host", "127.0.0.1", "--port", "8001"], {
       cwd: process.cwd(),
@@ -50,9 +55,29 @@ async function startServer() {
   app.use("/risk-api", async (req, res) => {
     try {
       const isMultipart = req.is("multipart/form-data");
+      const isImportMutation = req.path.startsWith("/imports/") && req.method === "POST";
+      const headers: Record<string, string> = { "content-type": req.headers["content-type"] || "application/json" };
+      if (isImportMutation) {
+        const user = await sdk.authenticateRequest(req).catch(() => null);
+        if (!user) {
+          res.status(401).json({ detail: "Sign in as an authorized administrator before importing merchant data." });
+          return;
+        }
+        if (user.role !== "admin") {
+          res.status(403).json({ detail: "CSV imports are restricted to administrator team members." });
+          return;
+        }
+        if (!importGatewayToken) {
+          res.status(503).json({ detail: "Import authorization is not configured on this environment." });
+          return;
+        }
+        headers["x-chargebackshield-import-token"] = importGatewayToken;
+        headers["x-chargebackshield-import-role"] = user.role;
+        headers["x-chargebackshield-import-actor"] = user.email || user.name || `user:${user.id}`;
+      }
       const upstream = await fetch(`http://127.0.0.1:8001${req.originalUrl.replace(/^\/risk-api/, "")}`, {
         method: req.method,
-        headers: { "content-type": req.headers["content-type"] || "application/json" },
+        headers,
         body: ["GET", "HEAD"].includes(req.method) ? undefined : isMultipart ? (req as unknown as BodyInit) : JSON.stringify(req.body ?? {}),
         ...(isMultipart ? { duplex: "half" } : {}),
       });

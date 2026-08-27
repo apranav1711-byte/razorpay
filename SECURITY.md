@@ -7,6 +7,8 @@ ChargebackShield is a demonstrator for **defensive merchant decision support**. 
 | Control | Implementation | Verification |
 |---|---|---|
 | No autonomous payment action | Neither FastAPI nor the React dashboard implements a payment, refund, transfer, or payment-platform client. | API inventory in `README.md` and the endpoint tests. |
+| Administrator-only import | The Express gateway resolves the user from the signed session and allows CSV preview/confirmation only for the `admin` role. The browser cannot nominate an actor or role. | API tests cover anonymous and non-administrator rejection. |
+| Preview-confirm integrity | Validated records are held only in a one-time, 15-minute, administrator-bound in-memory preview. Confirmation consumes the same preview; direct imports are retired. | API tests cover owner binding and expired, altered, and consumed-preview rejection. |
 | Explicit human gate | Approval requires an existing evidence draft in `drafted` or `awaiting_approval` state and records a named actor. | `test_approval_requires_a_draft_and_only_records_local_state`. |
 | No external submission | The approval response includes `external_submission: false`; it updates only a local demo state. | FastAPI approval test and Evidence Studio copy. |
 | Rejection accountability | Rejection requires a non-empty reason and appends a decision/audit record. | `test_rejection_requires_a_reason`. |

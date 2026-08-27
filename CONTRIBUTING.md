@@ -33,3 +33,5 @@ The web application forwards `/risk-api` requests to the local FastAPI service. 
 ## Pull request expectations
 
 Every behavioral change should explain its safety impact and include suitable automated coverage. New input fields must be considered against the CSV minimization policy. New evidence claims must be source-linkable. New state transitions need an actor, UTC timestamp, input hash, output summary, and model version in the application audit stream.
+
+CSV import changes must retain the server-side authorization boundary: an `admin` session is required to create a preview, a confirmation must use a current administrator-bound preview token, and the original CSV body must remain non-persistent. A browser-provided `actor`, `role`, or client-only “preview passed” flag is not a security control.

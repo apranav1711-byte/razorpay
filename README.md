@@ -14,7 +14,7 @@
 | Human review | Generate, approve, and reject operations appear in the Evidence Studio. | Approval requires an existing draft; rejection requires a reason; neither operation contacts a payment platform. |
 | Auditability | Auditable scores, drafts, decisions, metrics, and application events are persisted with UTC times, actor, input hash, output summary, and model version. | The API exposes audit-log reads only; update and delete routes are not implemented or exposed. |
 | Merchant UX | Overview, Risk Feed, Dispute Queue, Evidence Studio, Transparency, and Audit Log. | The dashboard uses visible explanations and does not represent a recommendation as an automatic action. |
-| Controlled merchant-data intake | Import Data accepts only bounded UTF-8 CSV metadata and performs a client/server schema check before scoring. | Sensitive columns such as card numbers, CVV/CVC, UPI PIN, contact data, and addresses are rejected; original CSV bytes are not stored. |
+| Controlled merchant-data intake | Import Data lets an authenticated administrator create a bounded UTF-8 CSV preview and explicitly confirm scoring. | Sensitive columns such as card numbers, CVV/CVC, UPI PIN, contact data, and addresses are rejected; original CSV bytes are not stored. |
 | Audit intelligence | Advanced period, action, actor, entity, and outcome filters plus interactive audit-activity and chargeback-trend charts. | Exports are derived from the visible, filtered, append-only event view. |
 | Evidence PDF | The Evidence Studio can download a server-generated PDF of an existing draft. | The PDF includes source links, evidence gaps, model/review metadata, a no-external-action notice, `no-store`, and an export audit event. |
 
@@ -79,7 +79,8 @@ uvicorn ml.api:app --host 127.0.0.1 --port 8001
 | Endpoint | Purpose | Safety behavior |
 |---|---|---|
 | `POST /score` | Scores a structured transaction and records top model contributions. | Returns a recommendation only. |
-| `POST /imports/csv` | Validates and scores a bounded merchant CSV file. | Rejects sensitive headers, invalid/ambiguous rows, and duplicate transaction IDs; retains no original CSV body. |
+| `POST /imports/preview` | Validates a bounded merchant CSV file and returns a time-limited preview. | Requires an authenticated administrator; retains no original CSV body and does not score records. |
+| `POST /imports/confirm` | Explicitly scores the exact, administrator-bound validated preview. | One-time only; expires after 15 minutes and is audited with server-derived actor identity. |
 | `GET /imports` | Lists import metadata and validation outcomes. | Read-only; exposes no raw CSV content. |
 | `GET /transactions` | Lists previously scored transactions and optionally filters by tier. | Read-only. |
 | `GET /disputes` | Lists the local dispute queue and evidence status. | Read-only. |
@@ -102,7 +103,7 @@ pnpm install
 pnpm dev
 ```
 
-The dashboard calls the FastAPI service via `/risk-api`. If the service is unavailable, the Evidence Studio remains viewable with the shipped safe demo draft, and attempts to generate a live draft show a clear availability message rather than silently fabricating output.
+The dashboard calls the FastAPI service via `/risk-api`. CSV imports are additionally checked at the authenticated application gateway: only an administrator can create and confirm a preview, and the recorded importer identity comes from the server-side session rather than a browser-supplied field. If the service is unavailable, the Evidence Studio remains viewable with the shipped safe demo draft, and attempts to generate a live draft show a clear availability message rather than silently fabricating output.
 
 ## Evaluation results
 
@@ -130,7 +131,7 @@ pnpm check
 
 The Python suite verifies bounded scoring, explicit insufficiency handling, supported-claim source links, approval requirements, local-only approval behavior, rejection-reason requirements, valid rejection audit events, and absence of audit-log update/delete routes. The Vitest suite verifies the TypeScript guardrail policy and existing authentication behavior.
 
-The CSV tests cover a valid two-row import, model-scored transaction persistence, original-file non-retention, sensitive-column rejection, and corresponding import audit events. The evidence-export test verifies an actual PDF response, attachment and no-store headers, and an export audit event.
+The CSV tests cover administrator-only preview access, owner-bound confirmation, expired/altered/consumed preview rejection, model-scored transaction persistence, original-file non-retention, sensitive-column rejection, structured format-error output, and corresponding import audit events. The evidence-export test verifies an actual PDF response, attachment and no-store headers, and an export audit event.
 
 ## Recording the five-minute walkthrough
 

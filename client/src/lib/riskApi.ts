@@ -39,18 +39,43 @@ export async function rejectEvidence(disputeId: string, reason: string): Promise
   if (!response.ok) throw new Error("A recorded rejection reason is required.");
 }
 
+export type CsvImportIssue = { code: string; message: string; row?: number | null; field?: string | null };
+export type CsvImportPreview = { preview_token: string; file_name: string; row_count: number; headers: string[]; sample_rows: Array<Record<string, string | number | boolean>>; content_hash_prefix: string; expires_at: string; stored_original_csv: false; message: string };
 export type CsvImportOutcome = { import_id: string; status: "accepted"; row_count: number; content_hash_prefix: string; high_risk_count: number; stored_original_csv: false; message: string };
 
-export async function importMerchantCsv(file: File): Promise<CsvImportOutcome> {
-  const form = new FormData();
-  form.append("file", file);
-  form.append("actor", "merchant.importer");
-  const response = await fetch("/risk-api/imports/csv", { method: "POST", body: form });
-  const payload = await response.json().catch(() => null) as CsvImportOutcome | { detail?: { errors?: string[] } } | null;
-  if (!response.ok) {
-    const errors = payload && "detail" in payload ? payload.detail?.errors : undefined;
-    throw new Error(errors?.join(" ") || "The import service is unavailable. No transaction records were retained.");
-  }
+export class CsvImportError extends Error {
+  constructor(message: string, public readonly status: number, public readonly issues: CsvImportIssue[] = []) { super(message); }
+}
+
+function fromApiError(status: number, payload: { detail?: string | { errors?: string[]; issues?: CsvImportIssue[] } } | null): CsvImportError {
+  const detail = payload?.detail;
+  if (typeof detail === "string") return new CsvImportError(detail, status);
+  const errors = detail?.errors ?? [];
+  return new CsvImportError(errors[0] || "The CSV could not be processed. No transaction records were retained.", status, detail?.issues ?? errors.map(message => ({ code: "invalid_csv", message })));
+}
+
+export function previewMerchantCsv(file: File, onProgress: (percent: number) => void): Promise<CsvImportPreview> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append("file", file);
+    const request = new XMLHttpRequest();
+    request.open("POST", "/risk-api/imports/preview");
+    request.responseType = "json";
+    request.upload.onprogress = event => { if (event.lengthComputable) onProgress(Math.max(8, Math.min(62, Math.round((event.loaded / event.total) * 62)))); };
+    request.onerror = () => reject(new CsvImportError("The import service is unavailable. No transaction records were retained.", 503));
+    request.onload = () => {
+      const payload = request.response as CsvImportPreview | { detail?: string | { errors?: string[]; issues?: CsvImportIssue[] } } | null;
+      if (request.status >= 200 && request.status < 300) resolve(payload as CsvImportPreview);
+      else reject(fromApiError(request.status, payload as { detail?: string | { errors?: string[]; issues?: CsvImportIssue[] } } | null));
+    };
+    request.send(form);
+  });
+}
+
+export async function confirmMerchantCsv(previewToken: string): Promise<CsvImportOutcome> {
+  const response = await fetch("/risk-api/imports/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preview_token: previewToken }) });
+  const payload = await response.json().catch(() => null) as CsvImportOutcome | { detail?: string | { errors?: string[]; issues?: CsvImportIssue[] } } | null;
+  if (!response.ok) throw fromApiError(response.status, payload as { detail?: string | { errors?: string[]; issues?: CsvImportIssue[] } } | null);
   return payload as CsvImportOutcome;
 }
 

@@ -11,11 +11,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import sqlite3
 import uuid
 from html import escape
 from io import BytesIO
 from contextlib import contextmanager
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -25,7 +27,7 @@ import numpy as np
 import pandas as pd
 import requests
 import shap
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from reportlab.lib import colors
@@ -34,7 +36,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from ml.imports import CsvValidationError, MAX_CSV_BYTES, validate_csv_bytes
+from ml.imports import CsvValidationError, MAX_CSV_BYTES, preview_records, validate_csv_bytes
 
 
 ROOT = Path(__file__).resolve().parent
@@ -66,6 +68,19 @@ class DecisionInput(BaseModel):
     reason: str | None = Field(default=None, max_length=1000)
 
 
+class ImportConfirmation(BaseModel):
+    preview_token: str = Field(min_length=20, max_length=128)
+
+
+@dataclass
+class CsvPreviewSession:
+    file_name: str
+    content_hash: str
+    records: list[dict[str, Any]]
+    actor: str
+    expires_at: datetime
+
+
 class AppState:
     model: Any
     calibrator: Any
@@ -75,6 +90,8 @@ class AppState:
 
 state = AppState()
 app = FastAPI(title="ChargebackShield API", version="1.0.0", docs_url="/docs")
+preview_sessions: dict[str, CsvPreviewSession] = {}
+PREVIEW_TTL_SECONDS = 15 * 60
 
 
 def utc_now() -> str:
@@ -86,6 +103,33 @@ def canonical_hash(value: Any) -> str:
     return hashlib.sha256(serialised.encode("utf-8")).hexdigest()
 
 
+def expected_import_token() -> str | None:
+    secret = os.getenv("JWT_SECRET")
+    if not secret:
+        return None
+    return hashlib.sha256(f"{secret}:chargebackshield-import-proxy-v1".encode("utf-8")).hexdigest()
+
+
+def trusted_importer(token: str | None, role: str | None, actor: str | None) -> str:
+    expected = expected_import_token()
+    if not expected:
+        raise HTTPException(status_code=503, detail="Import authorization is not configured on the service.")
+    if not token or not secrets.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="Import requests must pass through the authenticated application gateway.")
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Only administrator team members can preview or process merchant CSV data.")
+    if not actor:
+        raise HTTPException(status_code=401, detail="A trusted importer identity is required.")
+    return actor[:128]
+
+
+def clear_expired_previews() -> None:
+    now = datetime.now(UTC)
+    for token, session in list(preview_sessions.items()):
+        if session.expires_at <= now:
+            del preview_sessions[token]
+
+
 @contextmanager
 def database() -> Any:
     connection = sqlite3.connect(DATABASE_PATH)
@@ -93,6 +137,9 @@ def database() -> Any:
     try:
         yield connection
         connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()
 
@@ -294,25 +341,53 @@ def score_route(payload: ScoreInput) -> dict[str, Any]:
     return result
 
 
-@app.post("/imports/csv")
-async def import_csv(file: UploadFile = File(...), actor: str = Form("merchant.importer")) -> dict[str, Any]:
+@app.post("/imports/preview")
+async def preview_csv(
+    file: UploadFile = File(...),
+    x_chargebackshield_import_token: str | None = Header(default=None),
+    x_chargebackshield_import_role: str | None = Header(default=None),
+    x_chargebackshield_import_actor: str | None = Header(default=None),
+) -> dict[str, Any]:
+    actor = trusted_importer(x_chargebackshield_import_token, x_chargebackshield_import_role, x_chargebackshield_import_actor)
+    clear_expired_previews()
     file_name = file.filename or "merchant-import.csv"
     content = await file.read(MAX_CSV_BYTES + 1)
     content_hash = hashlib.sha256(content).hexdigest()
     if not file_name.lower().endswith(".csv") or file.content_type not in {None, "text/csv", "application/csv", "application/vnd.ms-excel"}:
-        import_id = record_import_result(file_name, content_hash, 0, "rejected", ["Only CSV files are accepted."], actor)
-        raise HTTPException(status_code=415, detail={"import_id": import_id, "errors": ["Only CSV files are accepted."]})
+        import_id = record_import_result(file_name, content_hash, 0, "preview_rejected", ["Only CSV files are accepted."], actor)
+        raise HTTPException(status_code=415, detail={"import_id": import_id, "errors": ["Only CSV files are accepted."], "issues": [{"code": "unsupported_file_type", "message": "Only CSV files are accepted."}]})
     try:
         records = validate_csv_bytes(content)
     except CsvValidationError as error:
-        import_id = record_import_result(file_name, content_hash, 0, "rejected", error.messages, actor)
-        raise HTTPException(status_code=422, detail={"import_id": import_id, "errors": error.messages}) from error
+        import_id = record_import_result(file_name, content_hash, 0, "preview_rejected", error.messages, actor)
+        raise HTTPException(status_code=422, detail={"import_id": import_id, "errors": error.messages, "issues": [asdict(issue) for issue in error.issues]}) from error
+    preview_token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(UTC) + timedelta(seconds=PREVIEW_TTL_SECONDS)
+    preview_sessions[preview_token] = CsvPreviewSession(file_name=file_name, content_hash=content_hash, records=records, actor=actor, expires_at=expires_at)
+    return {"preview_token": preview_token, "file_name": file_name, "row_count": len(records), "headers": sorted({key for record in records for key in record}), "sample_rows": preview_records(records), "content_hash_prefix": content_hash[:12], "expires_at": expires_at.isoformat(), "stored_original_csv": False, "message": "Preview validated. Confirm processing within 15 minutes to score the unchanged in-memory data."}
+
+
+@app.post("/imports/confirm")
+def confirm_csv_import(
+    confirmation: ImportConfirmation,
+    x_chargebackshield_import_token: str | None = Header(default=None),
+    x_chargebackshield_import_role: str | None = Header(default=None),
+    x_chargebackshield_import_actor: str | None = Header(default=None),
+) -> dict[str, Any]:
+    actor = trusted_importer(x_chargebackshield_import_token, x_chargebackshield_import_role, x_chargebackshield_import_actor)
+    clear_expired_previews()
+    session = preview_sessions.get(confirmation.preview_token)
+    if not session:
+        raise HTTPException(status_code=409, detail="Preview is missing, expired, or already used. Upload and preview the CSV again before processing.")
+    if session.actor != actor:
+        raise HTTPException(status_code=403, detail="Only the administrator who created the preview can confirm this import.")
+    records = session.records
     with database() as connection:
         existing = [record["transaction_id"] for record in records if connection.execute("SELECT 1 FROM transactions WHERE transaction_id = ?", (record["transaction_id"],)).fetchone()]
     if existing:
         errors = [f"Transaction ID already exists and was not overwritten: {transaction_id}." for transaction_id in existing[:50]]
-        import_id = record_import_result(file_name, content_hash, len(records), "rejected", errors, actor)
-        raise HTTPException(status_code=409, detail={"import_id": import_id, "errors": errors})
+        import_id = record_import_result(session.file_name, session.content_hash, len(records), "rejected", errors, actor)
+        raise HTTPException(status_code=409, detail={"import_id": import_id, "errors": errors, "issues": [{"code": "duplicate_transaction", "message": error} for error in errors]})
     import_id = str(uuid.uuid4())
     try:
         with database() as connection:
@@ -324,14 +399,20 @@ async def import_csv(file: UploadFile = File(...), actor: str = Form("merchant.i
                 append_audit(connection, "transaction_scored", "transaction", record["transaction_id"], stored_payload, risk, actor, MODEL_VERSION)
             connection.execute(
                 "INSERT INTO imports VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (import_id, file_name[:255], content_hash, len(records), "accepted", 0, "[]", actor, utc_now()),
+                (import_id, session.file_name[:255], session.content_hash, len(records), "accepted", 0, "[]", actor, utc_now()),
             )
             summary = {"row_count": len(records), "model_version": MODEL_VERSION, "stored_original_csv": False, "high_risk_count": sum(score(ScoreInput(**record))["tier"] == "high" for record in records)}
-            append_audit(connection, "csv_import_accepted", "import", import_id, {"file_name": file_name, "content_hash": content_hash, "rows": len(records)}, summary, actor, MODEL_VERSION)
+            append_audit(connection, "csv_import_accepted", "import", import_id, {"file_name": session.file_name, "content_hash": session.content_hash, "rows": len(records), "preview_token_hash": canonical_hash(confirmation.preview_token)}, summary, actor, MODEL_VERSION)
     except Exception as error:
-        import_id = record_import_result(file_name, content_hash, len(records), "rejected", ["The file could not be processed safely; no rows were retained."], actor)
+        import_id = record_import_result(session.file_name, session.content_hash, len(records), "rejected", ["The file could not be processed safely; no rows were retained."], actor)
         raise HTTPException(status_code=500, detail={"import_id": import_id, "errors": ["The file could not be processed safely; no rows were retained."]}) from error
-    return {"import_id": import_id, "status": "accepted", "row_count": len(records), "content_hash_prefix": content_hash[:12], "high_risk_count": summary["high_risk_count"], "stored_original_csv": False, "message": "Validated rows were scored and retained. The original CSV was not stored."}
+    del preview_sessions[confirmation.preview_token]
+    return {"import_id": import_id, "status": "accepted", "row_count": len(records), "content_hash_prefix": session.content_hash[:12], "high_risk_count": summary["high_risk_count"], "stored_original_csv": False, "message": "Preview-confirmed rows were scored and retained. The original CSV was not stored."}
+
+
+@app.post("/imports/csv")
+def legacy_import_route() -> None:
+    raise HTTPException(status_code=410, detail="Direct import is retired. Create a validated preview, then explicitly confirm processing.")
 
 
 @app.get("/imports")

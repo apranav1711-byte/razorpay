@@ -27,3 +27,9 @@
 - [x] Verify the repository handoff documentation and replace the rejected environment-example file with a safe configuration guide.
 - [x] Upload the validated ChargebackShield source and documentation to the selected Razorpay repository with an auditable release commit.
 - [x] Verify the remote repository contains the expected project structure and report the handoff result.
+- [x] Define import-capable roles and explicit authorization, preview-token, and confirm-processing guardrails.
+- [x] Complete and verify the interrupted administrator-only preview-and-confirm backend implementation before enabling the enhanced import workflow.
+- [x] Implement server-side CSV preview validation, authenticated importer authorization, preview integrity protection, and confirmed processing only.
+- [x] Enhance the Import Data interface with a staged preview, an explicit confirmation control, progress indicators, and format-specific validation errors.
+- [x] Add and run regression tests for unauthorized imports, stale or altered previews, valid confirmation, and detailed invalid-format feedback; update documentation.
+- [x] Save the verified role-based staged-import enhancement checkpoint.

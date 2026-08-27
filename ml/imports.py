@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,10 +19,34 @@ ALLOWED_HEADERS = REQUIRED_HEADERS | BOOLEAN_HEADERS | INTEGER_HEADERS | FLOAT_H
 SENSITIVE_MARKERS = ("card_number", "card number", "pan", "cvv", "cvc", "expiry", "expiration", "upi_pin", "upi pin", "email", "phone", "mobile", "address", "postal", "pin_code")
 
 
+@dataclass(frozen=True)
+class CsvIssue:
+    code: str
+    message: str
+    row: int | None = None
+    field: str | None = None
+
+
 class CsvValidationError(ValueError):
-    def __init__(self, messages: list[str]):
+    def __init__(self, messages: list[str], *, code: str = "invalid_csv"):
         super().__init__("; ".join(messages))
         self.messages = messages
+        self.issues = [self._issue(message, code) for message in messages]
+
+    @staticmethod
+    def _issue(message: str, fallback_code: str) -> CsvIssue:
+        match = re.match(r"^Row (\d+): ([^ ]+) (.*)$", message.rstrip("."))
+        if match:
+            return CsvIssue(code="invalid_field", message=message, row=int(match.group(1)), field=match.group(2))
+        if "Sensitive field" in message or "Sensitive column" in message:
+            return CsvIssue(code="sensitive_field", message=message)
+        if "Missing required" in message:
+            return CsvIssue(code="missing_required_header", message=message)
+        if "Unsupported header" in message:
+            return CsvIssue(code="unsupported_header", message=message)
+        if "limit" in message or "exceeds" in message:
+            return CsvIssue(code="size_or_row_limit", message=message)
+        return CsvIssue(code=fallback_code, message=message)
 
 
 def normalize_header(value: str) -> str:
@@ -129,3 +154,9 @@ def validate_csv_bytes(content: bytes) -> list[dict[str, Any]]:
     if errors:
         raise CsvValidationError(errors[:50])
     return records
+
+
+def preview_records(records: list[dict[str, Any]], maximum_rows: int = 5) -> list[dict[str, Any]]:
+    """Return a limited, minimized preview rather than raw CSV content."""
+    allowed = ["transaction_id", "amount_cents", "amount_zscore", "velocity_1h", "velocity_24h", "velocity_7d", "geo_mismatch", "customer_is_first_time", "new_device", "payment_method_risk", "merchant_category_risk", "velocity_spike", "high_amount", "currency", "payment_method"]
+    return [{key: record[key] for key in allowed if key in record} for record in records[:maximum_rows]]

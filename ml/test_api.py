@@ -14,12 +14,23 @@ class ChargebackShieldApiTest(unittest.TestCase):
         cls.temp_directory = tempfile.TemporaryDirectory()
         os.environ["CHARGEBACKSHIELD_API_DB"] = str(Path(cls.temp_directory.name) / "test.sqlite")
         os.environ["CHARGEBACKSHIELD_SKIP_LLM"] = "1"
+        os.environ["JWT_SECRET"] = "test-import-gateway-secret"
         from fastapi.testclient import TestClient
         from ml import api
 
         cls.api = api
         api.load_artifacts()
         api.initialise_database()
+        cls.admin_headers = {
+            "x-chargebackshield-import-token": api.expected_import_token(),
+            "x-chargebackshield-import-role": "admin",
+            "x-chargebackshield-import-actor": "admin.reviewer@example.test",
+        }
+        cls.member_headers = {
+            "x-chargebackshield-import-token": api.expected_import_token(),
+            "x-chargebackshield-import-role": "user",
+            "x-chargebackshield-import-actor": "member@example.test",
+        }
         cls.client = TestClient(api.app)
 
     @classmethod
@@ -97,13 +108,29 @@ class ChargebackShieldApiTest(unittest.TestCase):
         self.assertEqual(self.client.put("/audit-log", json={"action": "alter"}).status_code, 405)
         self.assertEqual(self.client.delete("/audit-log").status_code, 405)
 
-    def test_valid_csv_import_scores_records_without_storing_original_file(self) -> None:
+    def test_import_preview_requires_a_trusted_administrator(self) -> None:
+        csv_body = "transaction_id,amount_cents\ntxn_authorization_001,25000\n"
+        anonymous = self.client.post("/imports/preview", files={"file": ("merchant.csv", csv_body, "text/csv")})
+        self.assertEqual(anonymous.status_code, 401)
+        member = self.client.post("/imports/preview", files={"file": ("merchant.csv", csv_body, "text/csv")}, headers=self.member_headers)
+        self.assertEqual(member.status_code, 403)
+
+    def test_valid_csv_preview_then_confirm_scores_records_without_storing_original_file(self) -> None:
         csv_body = (
             "transaction_id,amount_cents,amount_zscore,velocity_1h,velocity_24h,velocity_7d,geo_mismatch,customer_is_first_time,new_device,payment_method_risk,merchant_category_risk\n"
             "txn_import_001,184500,3.1,8,11,17,true,true,true,0.58,0.51\n"
             "txn_import_002,92000,1.8,1,3,10,false,false,false,0.10,0.16\n"
         )
-        response = self.client.post("/imports/csv", files={"file": ("merchant-august.csv", csv_body, "text/csv")}, data={"actor": "merchant.importer"})
+        preview = self.client.post("/imports/preview", files={"file": ("merchant-august.csv", csv_body, "text/csv")}, headers=self.admin_headers)
+        self.assertEqual(preview.status_code, 200)
+        preview_data = preview.json()
+        self.assertEqual(preview_data["row_count"], 2)
+        self.assertFalse(preview_data["stored_original_csv"])
+        self.assertEqual(len(preview_data["sample_rows"]), 2)
+        other_admin = {**self.admin_headers, "x-chargebackshield-import-actor": "second.admin@example.test"}
+        blocked_owner = self.client.post("/imports/confirm", json={"preview_token": preview_data["preview_token"]}, headers=other_admin)
+        self.assertEqual(blocked_owner.status_code, 403)
+        response = self.client.post("/imports/confirm", json={"preview_token": preview_data["preview_token"]}, headers=self.admin_headers)
         self.assertEqual(response.status_code, 200)
         outcome = response.json()
         self.assertEqual(outcome["status"], "accepted")
@@ -115,20 +142,39 @@ class ChargebackShieldApiTest(unittest.TestCase):
         transaction = next(item for item in self.client.get("/transactions").json() if item["transaction_id"] == "txn_import_001")
         self.assertEqual(transaction["model_version"], "cbs-xgb-calibrated-1.0.0")
         audit = next(item for item in self.client.get("/audit-log").json() if item["action"] == "csv_import_accepted" and item["entity_id"] == outcome["import_id"])
-        self.assertEqual(audit["actor"], "merchant.importer")
+        self.assertEqual(audit["actor"], "admin.reviewer@example.test")
         self.assertIn("+00:00", audit["occurred_at"])
+        consumed = self.client.post("/imports/confirm", json={"preview_token": preview_data["preview_token"]}, headers=self.admin_headers)
+        self.assertEqual(consumed.status_code, 409)
+
+    def test_expired_or_altered_preview_cannot_be_processed(self) -> None:
+        csv_body = "transaction_id,amount_cents\ntxn_preview_expiry_001,25000\n"
+        preview = self.client.post("/imports/preview", files={"file": ("expiry-check.csv", csv_body, "text/csv")}, headers=self.admin_headers)
+        self.assertEqual(preview.status_code, 200)
+        token = preview.json()["preview_token"]
+        self.api.preview_sessions[token].expires_at = self.api.datetime.now(self.api.UTC) - self.api.timedelta(seconds=1)
+        expired = self.client.post("/imports/confirm", json={"preview_token": token}, headers=self.admin_headers)
+        self.assertEqual(expired.status_code, 409)
+        altered = self.client.post("/imports/confirm", json={"preview_token": f"{token[:-1]}x"}, headers=self.admin_headers)
+        self.assertEqual(altered.status_code, 409)
+        self.assertFalse(any(item["transaction_id"] == "txn_preview_expiry_001" for item in self.client.get("/transactions").json()))
 
     def test_sensitive_csv_column_is_rejected_and_audited_without_file_retention(self) -> None:
-        response = self.client.post("/imports/csv", files={"file": ("unsafe.csv", "transaction_id,amount_cents,card_number\ntxn_unsafe,1000,4111111111111111\n", "text/csv")}, data={"actor": "merchant.importer"})
+        response = self.client.post("/imports/preview", files={"file": ("unsafe.csv", "transaction_id,amount_cents,card_number\ntxn_unsafe,1000,4111111111111111\n", "text/csv")}, headers=self.admin_headers)
         self.assertEqual(response.status_code, 422)
         detail = response.json()["detail"]
         self.assertTrue(any("Sensitive field" in error for error in detail["errors"]))
+        self.assertEqual(detail["issues"][0]["code"], "sensitive_field")
         imported = next(item for item in self.client.get("/imports").json() if item["import_id"] == detail["import_id"])
-        self.assertEqual(imported["status"], "rejected")
+        self.assertEqual(imported["status"], "preview_rejected")
         self.assertEqual(imported["row_count"], 0)
         self.assertTrue(any("Sensitive field" in error for error in imported["errors"]))
-        audit = next(item for item in self.client.get("/audit-log").json() if item["action"] == "csv_import_rejected" and item["entity_id"] == detail["import_id"])
-        self.assertEqual(audit["actor"], "merchant.importer")
+        audit = next(item for item in self.client.get("/audit-log").json() if item["action"] == "csv_import_preview_rejected" and item["entity_id"] == detail["import_id"])
+        self.assertEqual(audit["actor"], "admin.reviewer@example.test")
+
+    def test_direct_import_route_is_retired(self) -> None:
+        response = self.client.post("/imports/csv")
+        self.assertEqual(response.status_code, 410)
 
     def test_audit_filters_and_chargeback_analytics_are_available(self) -> None:
         self.client.post("/score", json={"transaction_id": "txn_audit_analytics", "amount_cents": 25000})

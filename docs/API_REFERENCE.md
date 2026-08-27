@@ -17,7 +17,9 @@ ChargebackShield exposes a FastAPI reference service behind the dashboard’s `/
 | Method and route | Request | Response | Notes |
 |---|---|---|---|
 | `POST /score` | Structured scoring features | `risk_score`, tier, recommendation, model version, top features | Returns a bounded explanation and persists a score audit event. |
-| `POST /imports/csv` | Multipart `file` and optional `actor` | Import ID, count, hash prefix, high-risk count | UTF-8 CSV only, 5 MB / 5,000-row limit, all-or-nothing validation. |
+| `POST /imports/preview` | Multipart `file` through the authenticated gateway | One-time preview token, normalized sample, accepted headers, row count, hash prefix, and expiry | Administrator only. Validates in memory, retains no original CSV, and does not score/import records. |
+| `POST /imports/confirm` | JSON `preview_token` through the authenticated gateway | Import ID, count, hash prefix, and high-risk count | Administrator only. The one-time preview is tied to the same administrator and expires in 15 minutes. |
+| `POST /imports/csv` | — | `410 Gone` | Retired to prevent bypassing the explicit preview-and-confirm control. |
 | `GET /imports` | — | Import metadata, outcomes, and errors | Original CSV contents are never returned or retained. |
 | `GET /transactions` | Optional risk tier | Stored/scored transaction list | Read-only. |
 | `GET /disputes` | — | Local dispute queue | Read-only. |
@@ -32,7 +34,7 @@ ChargebackShield exposes a FastAPI reference service behind the dashboard’s `/
 
 ## CSV schema
 
-At minimum, import `transaction_id` and `amount_cents`. Risk features such as velocity, amount deviation, location mismatch, first-time customer, and device novelty are supported. Files containing payment account data, PAN, CVV/CVC, UPI PIN, emails, phone numbers, or addresses are rejected. See [`IMPORT_CONTRACT.md`](IMPORT_CONTRACT.md) for the complete field specification and minimal example.
+At minimum, import `transaction_id` and `amount_cents`. Risk features such as velocity, amount deviation, location mismatch, first-time customer, and device novelty are supported. Files containing payment account data, PAN, CVV/CVC, UPI PIN, emails, phone numbers, or addresses are rejected. Error output provides a stable error code and, where applicable, an offending row and field. See [`IMPORT_CONTRACT.md`](IMPORT_CONTRACT.md) for the complete field specification and minimal example.
 
 ## Example score request
 
